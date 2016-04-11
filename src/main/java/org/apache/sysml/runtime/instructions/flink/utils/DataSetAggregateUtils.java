@@ -1,33 +1,28 @@
 package org.apache.sysml.runtime.instructions.flink.utils;
 
-import org.apache.flink.api.common.functions.GroupCombineFunction;
-import org.apache.flink.api.common.functions.GroupReduceFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.util.Collector;
 import org.apache.sysml.lops.PartialAggregate;
 import org.apache.sysml.runtime.DMLRuntimeException;
-import org.apache.sysml.runtime.DMLUnsupportedOperationException;
 import org.apache.sysml.runtime.functionobjects.KahanPlus;
 import org.apache.sysml.runtime.instructions.flink.functions.AggregateSingleBlockFunction;
+import org.apache.sysml.runtime.instructions.flink.functions.ComputeBinaryBlockNnzFunction;
 import org.apache.sysml.runtime.instructions.spark.data.CorrMatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.data.OperationsOnMatrixValues;
 import org.apache.sysml.runtime.matrix.operators.AggregateOperator;
-import org.apache.sysml.udf.Matrix;
 
-import java.util.Iterator;
 
 public class DataSetAggregateUtils {
 
     public static DataSet<Tuple2<MatrixIndexes, MatrixBlock>> mergeByKey(DataSet<Tuple2<MatrixIndexes, MatrixBlock>> input) {
-        return input.groupBy(0).reduce(new MergeBlocksFunction());
+		return input.groupBy(0).reduce(new MergeBlocksFunction());
     }
 
-    public static MatrixBlock sumStable(DataSet<MatrixBlock> input) throws DMLRuntimeException{
+	public static MatrixBlock sumStable(DataSet<MatrixBlock> input) throws DMLRuntimeException{
 
         try {
             return input.reduce(new SumSingleBlockFunction()).collect().get(0);
@@ -146,6 +141,21 @@ public class DataSetAggregateUtils {
             }
 
             return new Tuple2<MatrixIndexes, MatrixBlock>(t1.f0, ret);
+        }
+    }
+
+
+    /**
+     * Utility to compute number of non-zeros from the given RDD of MatrixBlocks
+     * @param input
+     * @return
+     */
+    public static long computeNNZFromBlocks(DataSet<Tuple2<MatrixIndexes, MatrixBlock>> input) {
+        try {
+            return (long) input.map(new ComputeBinaryBlockNnzFunction()).sum(0).collect().get(0).f0.longValue();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return 0;
         }
     }
 }

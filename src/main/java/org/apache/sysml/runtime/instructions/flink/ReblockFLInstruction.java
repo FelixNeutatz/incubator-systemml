@@ -2,6 +2,9 @@ package org.apache.sysml.runtime.instructions.flink;
 
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.sysml.hops.recompile.Recompiler;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLUnsupportedOperationException;
@@ -10,11 +13,16 @@ import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.FlinkExecutionContext;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
+import org.apache.sysml.runtime.instructions.flink.functions.ExtractBlockForBinaryReblock;
+import org.apache.sysml.runtime.instructions.flink.utils.DataSetAggregateUtils;
+import org.apache.sysml.runtime.instructions.flink.utils.DataSetConverterUtils;
 import org.apache.sysml.runtime.instructions.spark.data.RDDProperties;
+import org.apache.sysml.runtime.instructions.spark.utils.RDDConverterUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MatrixFormatMetaData;
 import org.apache.sysml.runtime.matrix.data.InputInfo;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 
@@ -70,7 +78,20 @@ public class ReblockFLInstruction extends UnaryFLInstruction {
         //TODO check for in-memory reblock
 
         if(iimd.getInputInfo() == InputInfo.TextCellInputInfo || iimd.getInputInfo() == InputInfo.MatrixMarketInputInfo ) {
+			//check jdk version (prevent double.parseDouble contention on <jdk8)
+			//flec.checkAndRaiseValidationWarningJDKVersion();
+			
+			//get the input textcell rdd
+			DataSet<Tuple2<LongWritable, Text>> lines = (DataSet<Tuple2<LongWritable, Text>>)
+				flec.getDataSetHandleForVariable(input1.getName(), iimd.getInputInfo());
 
+			//convert textcell to binary block
+			DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out =
+				DataSetConverterUtils.textCellToBinaryBlock(flec.getFlinkContext(), lines, mcOut, outputEmptyBlocks);
+
+			//put output RDD handle into symbol table
+			flec.setDataSetHandleForVariable(output.getName(), out);
+			flec.addLineageDataSet(output.getName(), input1.getName());
         }
         else if(iimd.getInputInfo() == InputInfo.CSVInputInfo) {
             RDDProperties properties = mo.getRddProperties();
@@ -91,11 +112,43 @@ public class ReblockFLInstruction extends UnaryFLInstruction {
             csvInstruction.processInstruction(flec);
         }
         else if(iimd.getInputInfo()==InputInfo.BinaryCellInputInfo) {
-            //TODO
+			
+			DataSet<Tuple2<MatrixIndexes, MatrixCell>> binaryCells = (DataSet<Tuple2<MatrixIndexes, MatrixCell>>) flec.getDataSetHandleForVariable(input1.getName(), iimd.getInputInfo());
+			DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out = DataSetConverterUtils.binaryCellToBinaryBlock(flec.getFlinkContext(), binaryCells, mcOut, outputEmptyBlocks);
+
+			//put output RDD handle into symbol table
+			flec.setDataSetHandleForVariable(output.getName(), out);
+			flec.addLineageDataSet(output.getName(), input1.getName());
         }
         else if(iimd.getInputInfo()== InputInfo.BinaryBlockInputInfo)
         {
-            //TODO
+			/// HACK ALERT: Workaround for MLContext 
+			if(mc.getRowsPerBlock() == mcOut.getRowsPerBlock() && mc.getColsPerBlock() == mcOut.getColsPerBlock()) {
+				if(mo.getRDDHandle() != null) {
+					DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out = (DataSet<Tuple2<MatrixIndexes, MatrixBlock>>) mo.getDataSetHandle().getDataSet();
+
+					//put output RDD handle into symbol table
+					flec.setDataSetHandleForVariable(output.getName(), out);
+					flec.addLineageDataSet(output.getName(), input1.getName());
+					return;
+				}
+				else {
+					throw new DMLRuntimeException("Input RDD is not accessible through buffer pool for ReblockSPInstruction:" + iimd.getInputInfo());
+				}
+			}
+			else
+			{
+				//BINARY BLOCK <- BINARY BLOCK (different sizes)
+				DataSet<Tuple2<MatrixIndexes, MatrixBlock>> in1 = flec.getBinaryBlockDataSetHandleForVariable(input1.getName());
+
+				DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out =
+					in1.flatMap(new ExtractBlockForBinaryReblock(mc, mcOut));
+				out = DataSetAggregateUtils.mergeByKey( out );
+
+				//put output RDD handle into symbol table
+				flec.setDataSetHandleForVariable(output.getName(), out);
+				flec.addLineageDataSet(output.getName(), input1.getName());
+			}
         }
         else {
             throw new DMLRuntimeException("The given InputInfo is not implemented for ReblockSPInstruction:" + iimd.getInputInfo());

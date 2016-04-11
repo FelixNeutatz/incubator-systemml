@@ -7,22 +7,92 @@ import org.apache.flink.api.common.operators.Order;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.utils.DataSetUtils;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.CSVFileFormatProperties;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
+import org.apache.sysml.runtime.matrix.mapred.ReblockBuffer;
+import org.apache.sysml.runtime.util.FastStringTokenizer;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 public class DataSetConverterUtils {
+
+	/**
+	 *
+	 * @param env
+	 * @param input
+	 * @param mcOut
+	 * @param outputEmptyBlocks
+	 * @return
+	 * @throws DMLRuntimeException
+	 */
+	public static DataSet<Tuple2<MatrixIndexes, MatrixBlock>> textCellToBinaryBlock(ExecutionEnvironment env,
+		DataSet<Tuple2<LongWritable, Text>> input, MatrixCharacteristics mcOut, boolean outputEmptyBlocks)
+		throws DMLRuntimeException
+	{
+		//convert textcell rdd to binary block rdd (w/ partial blocks)
+		DataSet<Text> temp = input.map(new ExtractElement(1)).returns(Text.class);
+		DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out = temp.mapPartition(new TextToBinaryBlockFunction(mcOut));
+
+		
+		//inject empty blocks (if necessary) 
+		if( outputEmptyBlocks && mcOut.mightHaveEmptyBlocks() ) {
+			out = out.union(
+				FlinkUtils.getEmptyBlockRDD(env, mcOut) );
+		}
+
+		//aggregate partial matrix blocks
+		out = DataSetAggregateUtils.mergeByKey(out);
+		
+		return out;
+	}
+
+
+	/**
+	 *
+	 * @param env
+	 * @param input
+	 * @param mcOut
+	 * @param outputEmptyBlocks
+	 * @return
+	 * @throws DMLRuntimeException
+	 */
+	public static DataSet<Tuple2<MatrixIndexes, MatrixBlock>> binaryCellToBinaryBlock(ExecutionEnvironment env,
+		DataSet<Tuple2<MatrixIndexes, MatrixCell>> input, MatrixCharacteristics mcOut, boolean outputEmptyBlocks)
+		throws DMLRuntimeException
+	{
+		//convert binarycell rdd to binary block rdd (w/ partial blocks)
+		DataSet<Tuple2<MatrixIndexes, MatrixBlock>> out = input
+			.mapPartition(new BinaryCellToBinaryBlockFunction(mcOut));
+
+		//inject empty blocks (if necessary) 
+		if( outputEmptyBlocks && mcOut.mightHaveEmptyBlocks() ) {
+			out = out.union(
+				FlinkUtils.getEmptyBlockRDD(env, mcOut) );
+		}
+
+		//aggregate partial matrix blocks
+		out = DataSetAggregateUtils.mergeByKey( out );
+
+		return out;
+	}
+	
+
 
     public static DataSet<Tuple2<MatrixIndexes, MatrixBlock>> csvToBinaryBlock(ExecutionEnvironment env,
                                                                                DataSet<Tuple2<Integer, String>> input,
@@ -277,4 +347,188 @@ public class DataSetConverterUtils {
             return tuple.f1;
         }
     }
+
+	public static final class ExtractElement<T extends Tuple, R> implements MapFunction<T,R> {
+		private int id;
+
+		public ExtractElement (int id){
+			this.id = id;
+		}
+
+		@Override
+		public R map(T value) {
+			return (R) value.getField(id);
+
+		}
+	}
+
+	private static class TextToBinaryBlockFunction extends CellToBinaryBlockFunction<Text>
+	{
+		protected TextToBinaryBlockFunction(MatrixCharacteristics mc) {
+			super(mc);
+		}
+
+		public TextToBinaryBlockFunction() {
+			super();
+		}
+
+		@Override
+		public void mapPartition(Iterable<Text> textCollection, Collector<Tuple2<MatrixIndexes,MatrixBlock>> out)
+			throws Exception
+		{
+			ReblockBuffer rbuff = new ReblockBuffer(_bufflen, _rlen, _clen, _brlen, _bclen);
+			FastStringTokenizer st = new FastStringTokenizer(' ');
+
+			//get input string (ignore matrix market comments)
+			for (Text text: textCollection) {
+				String strVal = text.toString();
+				if( strVal.startsWith("%") ) {
+					continue;
+				}
+
+				//parse input ijv triple
+				st.reset(strVal);
+				long row = st.nextLong();
+				long col = st.nextLong();
+				double val = st.nextDouble();
+
+				//flush buffer if necessary
+				if (rbuff.getSize() >= rbuff.getCapacity()) {
+					flushBufferToList(out, rbuff);
+				}
+
+				//add value to reblock buffer
+				rbuff.appendCell(row, col, val);
+			}
+
+			//final flush buffer
+			flushBufferToList(out, rbuff);
+		}
+	}
+
+	/////////////////////////////////
+	// TEXTCELL-SPECIFIC FUNCTIONS
+
+	public static abstract class CellToBinaryBlockFunction<R> extends RichMapPartitionFunction<R,Tuple2<MatrixIndexes,MatrixBlock>>
+	{
+		//internal buffer size (aligned w/ default matrix block size)
+		protected static final int BUFFER_SIZE = 4 * 1000 * 1000; //4M elements (32MB)
+		protected int _bufflen = -1;
+
+		protected long _rlen = -1;
+		protected long _clen = -1;
+		protected int _brlen = -1;
+		protected int _bclen = -1;
+
+		MatrixCharacteristics mc = null;
+
+		public CellToBinaryBlockFunction()
+		{
+			
+		}
+
+		public CellToBinaryBlockFunction(MatrixCharacteristics mc)
+		{
+			this.mc = mc;
+		}
+		
+		@Override
+		public void open(Configuration parameters) throws Exception {
+			_rlen = mc.getRows();
+			_clen = mc.getCols();
+			_brlen = mc.getRowsPerBlock();
+			_bclen = mc.getColsPerBlock();
+
+			//determine upper bounded buffer len
+			_bufflen = (int) Math.min(_rlen*_clen, BUFFER_SIZE);
+		}
+
+		/**
+		 *
+		 * @param out
+		 * @param rbuff
+		 * @throws IOException
+		 * @throws DMLRuntimeException
+		 */
+		public void flushBufferToList (Collector<Tuple2<MatrixIndexes,MatrixBlock>> out, ReblockBuffer rbuff)
+			throws IOException, DMLRuntimeException
+		{
+			//temporary list of indexed matrix values to prevent library dependencies
+			ArrayList<IndexedMatrixValue> rettmp = new ArrayList<IndexedMatrixValue>();
+			rbuff.flushBufferToBinaryBlocks(rettmp);
+			
+			for (Tuple2<MatrixIndexes,MatrixBlock> block: fromIndexedMatrixBlock(rettmp)) {
+				out.collect(block);
+			}
+		}
+		
+		
+	}
+
+	/////////////////////////////////
+	// BINARYCELL-SPECIFIC FUNCTIONS
+
+	private static class BinaryCellToBinaryBlockFunction extends CellToBinaryBlockFunction<Tuple2<MatrixIndexes,MatrixCell>>
+	{
+		protected BinaryCellToBinaryBlockFunction(MatrixCharacteristics mc) {
+			super(mc);
+		}
+
+		public BinaryCellToBinaryBlockFunction() {
+			super();
+		}
+
+		@Override
+		public void mapPartition(Iterable<Tuple2<MatrixIndexes,MatrixCell>> binCollection, Collector<Tuple2<MatrixIndexes,MatrixBlock>> out)
+			throws Exception
+		{
+			ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+			ReblockBuffer rbuff = new ReblockBuffer(_bufflen, _rlen, _clen, _brlen, _bclen);
+
+			for(Tuple2<MatrixIndexes,MatrixCell> bin : binCollection)
+			{
+				//unpack the binary cell input
+				Tuple2<MatrixIndexes,MatrixCell> tmp = bin;
+
+				//parse input ijv triple
+				long row = tmp.f0.getRowIndex();
+				long col = tmp.f0.getColumnIndex();
+				double val = tmp.f1.getValue();
+
+				//flush buffer if necessary
+				if( rbuff.getSize() >= rbuff.getCapacity() )
+					flushBufferToList(out, rbuff);
+
+				//add value to reblock buffer
+				rbuff.appendCell(row, col, val);
+			}
+
+			//final flush buffer
+			flushBufferToList(out, rbuff);
+		}
+	}
+
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> fromIndexedMatrixBlock(ArrayList<IndexedMatrixValue> in )
+	{
+		ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+		for( IndexedMatrixValue imv : in )
+			ret.add(fromIndexedMatrixBlock(imv));
+
+		return ret;
+	}
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static Tuple2<MatrixIndexes,MatrixBlock> fromIndexedMatrixBlock( IndexedMatrixValue in ){
+		return new Tuple2<MatrixIndexes,MatrixBlock>(in.getIndexes(), (MatrixBlock)in.getValue());
+	}
 }

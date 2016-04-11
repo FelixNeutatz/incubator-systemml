@@ -11,16 +11,22 @@ import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
+import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.sysml.hops.OptimizerUtils;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLUnsupportedOperationException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.instructions.flink.data.DataSetObject;
+import org.apache.sysml.runtime.instructions.flink.functions.CopyBinaryCellFunction;
+import org.apache.sysml.runtime.instructions.flink.functions.CopyBlockPairFunction;
+import org.apache.sysml.runtime.instructions.flink.functions.CopyTextInputFunction;
+import org.apache.sysml.runtime.instructions.flink.utils.DataSetAggregateUtils;
+import org.apache.sysml.runtime.instructions.flink.utils.IOUtils;
 import org.apache.sysml.runtime.instructions.flink.utils.RowIndexedInputFormat;
-import org.apache.sysml.runtime.matrix.data.InputInfo;
-import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.instructions.spark.data.RDDObject;
+import org.apache.sysml.runtime.instructions.spark.utils.SparkUtils;
+import org.apache.sysml.runtime.matrix.data.*;
 
 import java.io.IOException;
 import java.util.LinkedList;
@@ -106,18 +112,28 @@ public class FlinkExecutionContext extends ExecutionContext {
         }
         //CASE 3: non-dirty (file exists on HDFS)
         else {
-            if (inputInfo == InputInfo.BinaryBlockInputInfo) {
-                //TODO
-            } else if (inputInfo == InputInfo.TextCellInputInfo || inputInfo == InputInfo.CSVInputInfo || inputInfo == InputInfo.MatrixMarketInputInfo) {
-                dataSet = getFlinkContext().readFile(new RowIndexedInputFormat(), mo.getFileName());
-                //FIXME (this fails with nullpointer exception)
-            } else if(inputInfo == InputInfo.BinaryCellInputInfo) {
-                //TODO
-            } else {
-                throw new DMLRuntimeException("Incorrect input format in getRDDHandleForVariable");
-            }
 
-            //keep dataset handle for future operations on it
+			// parallelize hdfs-resident file
+			// For binary block, these are: SequenceFileInputFormat.class, MatrixIndexes.class, MatrixBlock.class
+			if(inputInfo == InputInfo.BinaryBlockInputInfo) {
+				dataSet = IOUtils.hadoopFile(getFlinkContext(), mo.getFileName(), inputInfo.inputFormatClass, inputInfo.inputKeyClass, inputInfo.inputValueClass);
+				//note: this copy is still required in Spark 1.4 because spark hands out whatever the inputformat
+				//recordreader returns; the javadoc explicitly recommend to copy all key/value pairs
+				dataSet = ((DataSet<Tuple2<MatrixIndexes, MatrixBlock>>)dataSet).map( new CopyBlockPairFunction() ); //cp is workaround for read bug
+			}
+			else if(inputInfo == InputInfo.TextCellInputInfo || inputInfo == InputInfo.CSVInputInfo || inputInfo == InputInfo.MatrixMarketInputInfo) {
+				dataSet = IOUtils.hadoopFile(getFlinkContext(), mo.getFileName(), inputInfo.inputFormatClass, inputInfo.inputKeyClass, inputInfo.inputValueClass);
+				dataSet = ((DataSet<Tuple2<LongWritable, Text>>)dataSet).map( new CopyTextInputFunction() ); //cp is workaround for read bug
+			}
+			else if(inputInfo == InputInfo.BinaryCellInputInfo) {
+				dataSet = IOUtils.hadoopFile(getFlinkContext(), mo.getFileName(), inputInfo.inputFormatClass, inputInfo.inputKeyClass, inputInfo.inputValueClass);
+				dataSet = ((DataSet<Tuple2<MatrixIndexes, MatrixCell>>)dataSet).map( new CopyBinaryCellFunction() ); //cp is workaround for read bug
+			}
+			else {
+				throw new DMLRuntimeException("Incorrect input format in getRDDHandleForVariable");
+			}
+
+			//keep dataset handle for future operations on it
             DataSetObject dataSetHandle = new DataSetObject(dataSet, mo.getVarName());
             dataSetHandle.setHDFSFile(true);
             mo.setDataSetHandle(dataSetHandle);
@@ -132,8 +148,8 @@ public class FlinkExecutionContext extends ExecutionContext {
     /**
      * Utility method for creating an RDD out of an in-memory matrix block.
      *
-     * @param sc
-     * @param block
+     * @param env
+     * @param src
      * @return
      * @throws DMLUnsupportedOperationException
      * @throws DMLRuntimeException
@@ -176,4 +192,30 @@ public class FlinkExecutionContext extends ExecutionContext {
 
         return env.fromCollection(list);
     }
+
+	/**
+	 *
+	 * @param dataset
+	 * @param oinfo
+	 */
+	@SuppressWarnings("unchecked")
+	public static long writeDataSetToHDFS(DataSetObject dataset, String path, OutputInfo oinfo)
+	{
+		DataSet<Tuple2<MatrixIndexes,MatrixBlock>> ldataset = (DataSet<Tuple2<MatrixIndexes,MatrixBlock>>) dataset.getDataSet();
+
+		//recompute nnz 
+		long nnz = DataSetAggregateUtils.computeNNZFromBlocks(ldataset);
+
+		//save file is an action which also triggers nnz maintenance
+		IOUtils.saveAsHadoopFile(ldataset,
+			path,
+			oinfo.outputKeyClass,
+			oinfo.outputValueClass,
+			oinfo.outputFormatClass);
+
+		//return nnz aggregate of all blocks
+		return nnz;
+	}
+	
+	
 }
