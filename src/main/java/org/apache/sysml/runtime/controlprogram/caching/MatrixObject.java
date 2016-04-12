@@ -33,7 +33,9 @@ import org.apache.sysml.lops.Lop;
 import org.apache.sysml.parser.Expression.DataType;
 import org.apache.sysml.parser.Expression.ValueType;
 import org.apache.sysml.runtime.DMLRuntimeException;
+import org.apache.sysml.runtime.DMLUnsupportedOperationException;
 import org.apache.sysml.runtime.controlprogram.ParForProgramBlock.PDataPartitionFormat;
+import org.apache.sysml.runtime.controlprogram.context.FlinkExecutionContext;
 import org.apache.sysml.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysml.runtime.instructions.flink.data.DataSetObject;
 import org.apache.sysml.runtime.instructions.spark.data.BroadcastObject;
@@ -512,8 +514,8 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 			{
 				if( DMLScript.STATISTICS )
 					CacheStatistics.incrementHDFSHits();
-				
-				if( getRDDHandle()==null || getRDDHandle().allowsShortCircuitRead() )
+
+				if( getDataSetHandle() == null && (getRDDHandle() == null || getRDDHandle().allowsShortCircuitRead()))
 				{
 					//check filename
 					if( _hdfsFileName == null )
@@ -521,21 +523,33 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 
 					//read matrix from hdfs
 					_data = readMatrixFromHDFS( _hdfsFileName );
-					
+
 					//mark for initial local write despite read operation
 					_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
 				}
 				else
 				{
-					//read matrix from rdd (incl execute pending rdd operations)
 					MutableBoolean writeStatus = new MutableBoolean();
-					_data = readMatrixFromRDD( getRDDHandle(), writeStatus );
-					
-					//mark for initial local write (prevent repeated execution of rdd operations)
-					if( writeStatus.booleanValue() )
-						_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
-					else		
-						_requiresLocalWrite = true;
+
+					if (DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK || DMLScript.rtplatform == RUNTIME_PLATFORM.SPARK) {
+						//read matrix from rdd (incl execute pending rdd operations)
+						_data = readMatrixFromRDD(getRDDHandle(), writeStatus);
+
+						//mark for initial local write (prevent repeated execution of rdd operations)
+						if (writeStatus.booleanValue())
+							_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
+						else
+							_requiresLocalWrite = true;
+					} else if (DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_FLINK || DMLScript.rtplatform == RUNTIME_PLATFORM.FLINK) {
+						//read matrix from rdd (incl execute pending rdd operations)
+						_data = readMatrixFromDataSet(getDataSetHandle(), writeStatus);
+
+						//mark for initial local write (prevent repeated execution of rdd operations)
+						if (writeStatus.booleanValue())
+							_requiresLocalWrite = CACHING_WRITE_CACHE_ON_READ;
+						else
+							_requiresLocalWrite = true;
+					}
 				}
 				
 				_dirtyFlag = false;
@@ -1423,6 +1437,77 @@ public class MatrixObject extends CacheableData<MatrixBlock>
 			throw new IOException("Unable to load matrix from rdd: "+lrdd.getVarName());
 		}
 		
+		return mb;
+	}
+
+	/**
+	 *
+	 * @param dataset
+	 * @return
+	 * @throws IOException
+	 */
+	private MatrixBlock readMatrixFromDataSet(DataSetObject dataset, MutableBoolean writeStatus)
+		throws IOException
+	{
+		//note: the read of a matrix block from an RDD might trigger
+		//lazy evaluation of pending transformations.
+		DataSetObject lrdd = dataset;
+
+		//prepare return status (by default only collect)
+		writeStatus.setValue(false);
+
+		MatrixFormatMetaData iimd = (MatrixFormatMetaData) _metaData;
+		MatrixCharacteristics mc = iimd.getMatrixCharacteristics();
+		InputInfo ii = iimd.getInputInfo();
+		MatrixBlock mb = null;
+		try
+		{
+			//prevent unnecessary collect through rdd checkpoint
+			/*
+			if( dataset.allowsShortCircuitCollect() ) {
+				lrdd = (DataSetObject)dataset.getLineageChilds().get(0);
+			}*/
+
+			//obtain matrix block from RDD
+			int rlen = (int)mc.getRows();
+			int clen = (int)mc.getCols();
+			int brlen = (int)mc.getRowsPerBlock();
+			int bclen = (int)mc.getColsPerBlock();
+			long nnz = mc.getNonZeros();
+
+			//guarded rdd collect 
+			/*
+			if( ii == InputInfo.BinaryBlockInputInfo && //guarded collect not for binary cell
+				!OptimizerUtils.checkSparkCollectMemoryBudget(rlen, clen, brlen, bclen, nnz, sizePinned.get()) ) {
+				//write RDD to hdfs and read to prevent invalid collect mem consumption 
+				//note: lazy, partition-at-a-time collect (toLocalIterator) was significantly slower
+				if( !MapReduceTool.existsFileOnHDFS(_hdfsFileName) ) { //prevent overwrite existing file
+					long newnnz = FlinkExecutionContext.writeDataSetToHDFS(lrdd, _hdfsFileName, iimd.getOutputInfo());
+					((MatrixDimensionsMetaData) _metaData).getMatrixCharacteristics().setNonZeros(newnnz);
+					((DataSetObject)dataset).setHDFSFile(true); //mark rdd as hdfs file (for restore)
+					writeStatus.setValue(true);         //mark for no cache-write on read
+				}
+				mb = readMatrixFromHDFS(_hdfsFileName);
+			}
+			else */
+			if( ii == InputInfo.BinaryCellInputInfo ) {
+				//collect matrix block from binary block RDD
+				mb = FlinkExecutionContext.toMatrixBlock(lrdd, rlen, clen, nnz);
+			}
+			else {
+				//collect matrix block from binary cell RDD
+				mb = FlinkExecutionContext.toMatrixBlock(lrdd, rlen, clen, brlen, bclen, nnz);
+			}
+		}
+		catch(DMLRuntimeException ex) {
+			throw new IOException(ex);
+		}
+
+		//sanity check correct output
+		if( mb == null ) {
+			throw new IOException("Unable to load matrix from rdd: "+lrdd.getVarName());
+		}
+
 		return mb;
 	}
 	

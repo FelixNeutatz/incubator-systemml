@@ -163,7 +163,7 @@ public abstract class AutomatedTestBase
 	 * Also set DMLScript.USE_LOCAL_SPARK_CONFIG to true for running the test 
 	 * suite in spark mode
 	 */
-	protected static RUNTIME_PLATFORM rtplatform = RUNTIME_PLATFORM.HYBRID;
+	protected static RUNTIME_PLATFORM rtplatform = RUNTIME_PLATFORM.FLINK;
 	
 	protected static final boolean DEBUG = false;
 	protected static final boolean VISUALIZE = false;
@@ -1139,6 +1139,8 @@ public abstract class AutomatedTestBase
 			args.add("hybrid_spark");
 		else if (rtplatform == RUNTIME_PLATFORM.FLINK)
 			args.add("flink");
+		else if (rtplatform == RUNTIME_PLATFORM.HYBRID_FLINK)
+			args.add("hybrid_flink");
 		else {
 			throw new RuntimeException("Unknown runtime platform: " + rtplatform);
 		}

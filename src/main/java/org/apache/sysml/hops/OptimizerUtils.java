@@ -431,6 +431,22 @@ public class OptimizerUtils
 		//memory and hand it over to the spark context as in-memory object
 		return ( size < memBudgetExec && 2*size < memBudgetLocal );
 	}
+
+	/**
+	 *
+	 * @param size
+	 * @return
+	 */
+	public static boolean checkFlinkBroadcastMemoryBudget( double size )
+	{
+		double memBudgetExec = SparkExecutionContext.getBroadcastMemoryBudget(); //TODO: change this
+		double memBudgetLocal = OptimizerUtils.getLocalMemBudget();
+
+		//basic requirement: the broadcast needs to to fit once in the remote broadcast memory 
+		//and twice into the local memory budget because we have to create a partitioned broadcast
+		//memory and hand it over to the spark context as in-memory object
+		return ( size < memBudgetExec && 2*size < memBudgetLocal );
+	}
 	
 	/**
 	 * 

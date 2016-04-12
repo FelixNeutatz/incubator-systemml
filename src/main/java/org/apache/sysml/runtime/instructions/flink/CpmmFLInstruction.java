@@ -59,7 +59,7 @@ public class CpmmFLInstruction extends BinarySPInstruction
 	 * @throws DMLRuntimeException
 	 * @throws DMLUnsupportedOperationException
 	 */
-	public static CpmmFLInstruction parseInstruction(String instr )
+	public static CpmmFLInstruction parseInstruction (String instr)
 			throws DMLRuntimeException, DMLUnsupportedOperationException {
 		CPOperand input1 = new CPOperand("", Expression.ValueType.UNKNOWN, Expression.DataType.UNKNOWN);
 		CPOperand input2 = new CPOperand("", Expression.ValueType.UNKNOWN, Expression.DataType.UNKNOWN);

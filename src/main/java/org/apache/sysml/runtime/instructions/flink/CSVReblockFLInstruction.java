@@ -89,8 +89,7 @@ public class CSVReblockFLInstruction extends UnaryFLInstruction {
         mcOut.set(mcIn.getRows(), mcIn.getCols(), _brlen, _bclen);
 
         //check for in-memory reblock
-        //TODO this is set to be always the case for now! Should also Check in the case of flink!
-        if( true /*Recompiler.checkCPReblock(flec, input1.getName())*/ ) {
+        if( Recompiler.checkCPReblock(flec, input1.getName()) ) {
             Recompiler.executeInMemoryReblock(flec, input1.getName(), output.getName());
             return;
         }

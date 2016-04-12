@@ -231,7 +231,7 @@ public abstract class Hop
 					_etype = ExecType.MR;
 				else if( DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_SPARK )
 					_etype = ExecType.SPARK;
-				else if( DMLScript.rtplatform == RUNTIME_PLATFORM.FLINK)
+				else if( DMLScript.rtplatform == RUNTIME_PLATFORM.HYBRID_FLINK)
 					_etype = ExecType.FLINK;
 			}
 		}

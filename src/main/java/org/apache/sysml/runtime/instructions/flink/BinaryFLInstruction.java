@@ -2,6 +2,7 @@ package org.apache.sysml.runtime.instructions.flink;
 
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.sysml.lops.BinaryM.VectorType;
 import org.apache.sysml.parser.Expression;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLUnsupportedOperationException;
@@ -121,6 +122,20 @@ public abstract class BinaryFLInstruction extends ComputationFLInstruction {
         fec.addLineageDataSet(output.getName(), matrixVar);
     }
 
+
+	/**
+	 *
+	 * @param ec
+	 * @param type
+	 * @throws DMLRuntimeException
+	 * @throws DMLUnsupportedOperationException
+	 */
+	protected void processMatrixBVectorBinaryInstruction(ExecutionContext ec, VectorType vtype)
+		throws DMLRuntimeException, DMLUnsupportedOperationException
+	{
+		throw new DMLRuntimeException("not supported yet");
+	}
+	
     /**
      *
      * @param fec

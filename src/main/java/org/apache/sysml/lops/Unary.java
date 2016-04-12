@@ -45,7 +45,7 @@ public class Unary extends Lop
 		SPROP, SIGMOID, SELP, SUBTRACT_NZ, LOG_NZ,
 		NOTSUPPORTED
 	};
-
+	
 	OperationTypes operation;
 
 	Lop valInput;
@@ -78,9 +78,7 @@ public class Unary extends Lop
 		this.addInput(input1);
 		input1.addOutput(this);
 		this.addInput(input2);
-		input2.addOutput(this);
-
-		// By definition, this lop should not break alignment
+		input2.addOutput(this);// By definition, this lop should not break alignment
 		boolean breaksAlignment = false;
 		boolean aligner = false;
 		boolean definesMRJob = false;
@@ -128,7 +126,7 @@ public class Unary extends Lop
 	{
 		//sanity check
 		if ( (op == OperationTypes.INVERSE || op == OperationTypes.CHOLESKY)
-			 && (et == ExecType.SPARK || et == ExecType.MR) ) {
+			 && (et == ExecType.SPARK || et == ExecType.MR || et == ExecType.FLINK) ) {
 			throw new LopsException("Invalid exection type "+et.toString()+" for operation "+op.toString());
 		}
 		
@@ -191,6 +189,7 @@ public class Unary extends Lop
 		throws LopsException 
 	{
 		switch (op) {
+			
 		case NOT:
 			return "!";
 		case ABS:
@@ -222,12 +221,16 @@ public class Unary extends Lop
 			
 		case ROUND:
 			return "round";
+			
+		
 
 		case ADD:
 			return "+";
 
 		case SUBTRACT:
 			return "-";
+		
+		
 
 		case SUBTRACT_NZ:
 			return "-nz";

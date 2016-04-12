@@ -23,6 +23,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map.Entry;
 
+import org.apache.flink.api.common.Plan;
+import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.sysml.parser.DMLProgram;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLScriptException;
@@ -147,7 +149,8 @@ public class Program
 				_programBlocks.get(i).execute(ec);
 			}
 			if (ec instanceof FlinkExecutionContext) {
-				((FlinkExecutionContext) ec).getFlinkContext().execute();
+				ExecutionEnvironment env = ((FlinkExecutionContext) ec).getFlinkContext();
+				// env.execute();
 			}
 		}
 		catch(DMLScriptException e) {

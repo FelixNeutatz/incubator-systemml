@@ -1,10 +1,12 @@
 package org.apache.sysml.runtime.instructions;
 
 import org.apache.sysml.lops.Checkpoint;
+import org.apache.sysml.lops.DataGen;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.DMLUnsupportedOperationException;
 import org.apache.sysml.runtime.instructions.flink.*;
 import org.apache.sysml.runtime.instructions.flink.FLInstruction.FLINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.spark.*;
 
 import java.util.HashMap;
 
@@ -42,12 +44,17 @@ public class FLInstructionParser extends InstructionParser {
         String2FLInstructionType.put( "uaktrace", FLINSTRUCTION_TYPE.AggregateUnary);
 
 
-        //binary aggregate operators (matrix multiplication operators)
-        String2FLInstructionType.put( "tsmm" , FLINSTRUCTION_TYPE.TSMM);
+		//binary aggregate operators (matrix multiplication operators)
+		String2FLInstructionType.put( "mapmm"      , FLINSTRUCTION_TYPE.MAPMM);
+		String2FLInstructionType.put( "mapmmchain" , FLINSTRUCTION_TYPE.MAPMMCHAIN);
+		String2FLInstructionType.put( "tsmm"       , FLINSTRUCTION_TYPE.TSMM);
+		String2FLInstructionType.put( "cpmm"   	   , FLINSTRUCTION_TYPE.CPMM);
 
         // REBLOCK Instruction Opcodes
         String2FLInstructionType.put( "rblk"    , FLINSTRUCTION_TYPE.Reblock);
         String2FLInstructionType.put( "csvrblk" , FLINSTRUCTION_TYPE.CSVReblock);
+
+		String2FLInstructionType.put( DataGen.RAND_OPCODE  , FLINSTRUCTION_TYPE.Rand);
 
         // Spark-specific instructions
         String2FLInstructionType.put( Checkpoint.OPCODE, FLINSTRUCTION_TYPE.Checkpoint);
@@ -73,6 +80,8 @@ public class FLInstructionParser extends InstructionParser {
         String2FLInstructionType.put( "map%/%"  , FLINSTRUCTION_TYPE.ArithmeticBinary);
         String2FLInstructionType.put( "map1-*"  , FLINSTRUCTION_TYPE.ArithmeticBinary);
         String2FLInstructionType.put( "map^"    , FLINSTRUCTION_TYPE.ArithmeticBinary);
+
+		String2FLInstructionType.put( "write"   , FLINSTRUCTION_TYPE.Write);
 
     }
 
@@ -105,8 +114,19 @@ public class FLInstructionParser extends InstructionParser {
                 return CheckpointFLInstruction.parseInstruction(str);
             case ArithmeticBinary:
                 return ArithmeticBinaryFLInstruction.parseInstruction(str);
-            case TSMM:
-                return TsmmFLInstruction.parseInstruction(str);
+
+			// matrix multiplication instructions
+			/*
+			case CPMM:
+				return CpmmFLInstruction.parseInstruction(str);*/
+			case MAPMM:
+				return MapmmFLInstruction.parseInstruction(str);
+			/*case MAPMMCHAIN:
+				return MapmmChainFLInstruction.parseInstruction(str);*/
+			case TSMM:
+				return TsmmFLInstruction.parseInstruction(str);
+			
+			
             case Reblock:
                 return ReblockFLInstruction.parseInstruction(str);
             case CSVReblock:
@@ -115,6 +135,10 @@ public class FLInstructionParser extends InstructionParser {
                 return WriteFLInstruction.parseInstruction(str);
             case Checkpoint:
                 return CheckpointFLInstruction.parseInstruction(str);
+			case Rand:
+				return RandFLInstruction.parseInstruction(str);
+			
+			
 
             case INVALID:
             default:
