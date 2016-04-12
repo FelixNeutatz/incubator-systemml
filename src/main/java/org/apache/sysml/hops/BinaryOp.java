@@ -593,8 +593,6 @@ public class BinaryOp extends Hop
 			else //general case
 				ot = HopsOpOp2LopsU.get(op);
 			
-			System.out.println(ot);
-			getInput().get(1);
 			
 			
 			Unary unary1 = new Unary(getInput().get(0).constructLops(),
