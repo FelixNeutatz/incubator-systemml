@@ -19,12 +19,17 @@
 
 package org.apache.sysml.runtime.instructions.flink.utils;
 
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.util.Collector;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.matrix.data.MatrixCell;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 import java.util.ArrayList;
@@ -53,4 +58,97 @@ public class FlinkUtils {
         //create rdd of in-memory list
         return env.fromCollection(list);
     }
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static Tuple2<MatrixIndexes,MatrixBlock> fromIndexedMatrixBlock( IndexedMatrixValue in ){
+		return new Tuple2<MatrixIndexes,MatrixBlock>(in.getIndexes(), (MatrixBlock)in.getValue());
+	}
+
+
+	/**
+	 * Utility to compute dimensions and non-zeros in a given RDD of binary cells.
+	 *
+	 * @param rdd
+	 * @param computeNNZ
+	 * @return
+	 */
+	public static MatrixCharacteristics computeMatrixCharacteristics(DataSet<Tuple2<MatrixIndexes, MatrixCell>> input)
+	{
+		//TODO: check whether there is a better way
+		// compute dimensions and nnz in single pass
+		MatrixCharacteristics ret = null;
+		try {
+			ret = input
+				.map(new AnalyzeCellMatrixCharacteristics())
+				.reduce(new AggregateMatrixCharacteristics()).collect().get(0);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+		return ret;
+	}
+
+	/**
+	 *
+	 */
+	private static class AggregateMatrixCharacteristics implements ReduceFunction<MatrixCharacteristics>
+	{
+		private static final long serialVersionUID = 4263886749699779994L;
+
+		@Override
+		public MatrixCharacteristics reduce(MatrixCharacteristics arg0, MatrixCharacteristics arg1)
+			throws Exception
+		{
+			return new MatrixCharacteristics(
+				Math.max(arg0.getRows(), arg1.getRows()),  //max
+				Math.max(arg0.getCols(), arg1.getCols()),  //max
+				arg0.getRowsPerBlock(),
+				arg0.getColsPerBlock(),
+				arg0.getNonZeros() + arg1.getNonZeros() ); //sum
+		}
+	}
+
+	/**
+	 *
+	 */
+	private static class AnalyzeCellMatrixCharacteristics implements MapFunction<Tuple2<MatrixIndexes,MatrixCell>, MatrixCharacteristics>
+	{
+		private static final long serialVersionUID = 8899395272683723008L;
+
+		@Override
+		public MatrixCharacteristics map(Tuple2<MatrixIndexes, MatrixCell> arg0)
+			throws Exception
+		{
+			long rix = arg0.f0.getRowIndex();
+			long cix = arg0.f0.getColumnIndex();
+			long nnz = (arg0.f1.getValue()!=0) ? 1 : 0;
+			return new MatrixCharacteristics(rix, cix, 0, 0, nnz);
+		}
+	}
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static void fromIndexedMatrixBlock(ArrayList<IndexedMatrixValue> in, Collector<Tuple2<MatrixIndexes,MatrixBlock>> out)
+	{
+		ArrayList<Tuple2<MatrixIndexes,MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+		for( IndexedMatrixValue imv : in )
+			out.collect(fromIndexedMatrixBlock(imv));
+	}
+
+	/**
+	 *
+	 * @param ix
+	 * @param mb
+	 * @return
+	 */
+	public static IndexedMatrixValue toIndexedMatrixBlock(MatrixIndexes ix, MatrixBlock mb ) {
+		return new IndexedMatrixValue(ix, mb);
+	}
 }

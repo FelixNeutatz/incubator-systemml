@@ -21,6 +21,7 @@ package org.apache.sysml.runtime.instructions.flink;
 
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysml.runtime.controlprogram.context.FlinkExecutionContext;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.operators.Operator;
@@ -76,5 +77,36 @@ public abstract class ComputationFLInstruction extends FLInstruction {
                         mcIn1.getRowsPerBlock(), mcIn1.getRowsPerBlock());
         }
     }
+
+	/**
+	 *
+	 * @param flec
+	 * @throws DMLRuntimeException
+	 */
+	protected void updateUnaryOutputMatrixCharacteristics(FlinkExecutionContext flec)
+		throws DMLRuntimeException
+	{
+		updateUnaryOutputMatrixCharacteristics(flec, input1.getName(), output.getName());
+	}
+
+	/**
+	 *
+	 * @param flec
+	 * @param nameIn
+	 * @param nameOut
+	 * @throws DMLRuntimeException
+	 */
+	protected void updateUnaryOutputMatrixCharacteristics(FlinkExecutionContext flec, String nameIn, String nameOut)
+		throws DMLRuntimeException
+	{
+		MatrixCharacteristics mc1 = flec.getMatrixCharacteristics(nameIn);
+		MatrixCharacteristics mcOut = flec.getMatrixCharacteristics(nameOut);
+		if(!mcOut.dimsKnown()) {
+			if(!mc1.dimsKnown())
+				throw new DMLRuntimeException("The output dimensions are not specified and cannot be inferred from input:" + mc1.toString() + " " + mcOut.toString());
+			else
+				mcOut.set(mc1.getRows(), mc1.getCols(), mc1.getRowsPerBlock(), mc1.getColsPerBlock());
+		}
+	}
 
 }

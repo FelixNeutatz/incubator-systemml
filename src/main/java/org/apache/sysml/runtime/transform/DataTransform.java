@@ -40,6 +40,8 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.sysml.runtime.controlprogram.context.FlinkExecutionContext;
+import org.apache.sysml.runtime.instructions.flink.ParameterizedBuiltinFLInstruction;
 import org.apache.wink.json4j.JSONArray;
 import org.apache.wink.json4j.JSONException;
 import org.apache.wink.json4j.JSONObject;
@@ -1467,6 +1469,12 @@ public class DataTransform
 			mcOut.setDimension(numRowsTf, numColumnsTf);
 			mcOut.setNonZeros(-1);
 		}
+	}
+
+
+
+	public static void flDataTransform(ParameterizedBuiltinFLInstruction inst, FrameObject[] inputs, MatrixObject[] outputs, ExecutionContext ec) throws Exception {
+		throw new UnsupportedOperationException("The method is not implemented yet: flDataTransform");
 	}
 	
 

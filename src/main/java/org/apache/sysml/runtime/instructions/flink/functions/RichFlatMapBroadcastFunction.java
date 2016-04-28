@@ -19,40 +19,24 @@
 
 package org.apache.sysml.runtime.instructions.flink.functions;
 
+
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
-import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
-import org.apache.sysml.runtime.matrix.operators.BinaryOperator;
 
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.Map;
 
-public class OuterVectorBinaryOpFunction extends RichFlatMapBroadcastFunction<Tuple2<MatrixIndexes,MatrixBlock>, Tuple2<MatrixIndexes,MatrixBlock>>
-{
-	private static final long serialVersionUID = 1730704346934726826L;
-	
-	private BinaryOperator _op;
-	
-	public OuterVectorBinaryOpFunction(BinaryOperator op) 
-	{
-		_op = op;
+public abstract class RichFlatMapBroadcastFunction<IN, OUT>  extends RichFlatMapFunction<IN,OUT> {
+	protected HashMap<Long, HashMap<Long, MatrixBlock>> _pbc = null;
+
+	@Override
+	public void open(Configuration parameters) throws Exception {
+		_pbc = BroadcastFunction.open(getRuntimeContext(),_pbc);
 	}
 
 	@Override
-	public void flatMap(Tuple2<MatrixIndexes, MatrixBlock> arg0, Collector<Tuple2<MatrixIndexes, MatrixBlock>> out)
-		throws Exception
-	{
-		MatrixBlock resultBlk = null;
-		
-		for(Map.Entry<Long,MatrixBlock> in2 : _pbc.get(1L).entrySet())
-		{
-			resultBlk = (MatrixBlock)arg0.f1.binaryOperations (_op, in2.getValue(), new MatrixBlock());
-			resultBlk.examSparsity();
-			out.collect(new Tuple2<MatrixIndexes,MatrixBlock>(new MatrixIndexes(arg0.f0.getRowIndex(), in2.getKey()), resultBlk));
-		}
+	public void close() throws Exception {
+		_pbc = BroadcastFunction.close(_pbc);
 	}
 }

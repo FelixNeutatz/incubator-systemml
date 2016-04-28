@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 
+import org.apache.sysml.api.DMLScript;
 import org.junit.runners.Parameterized.Parameters;
 
 import org.apache.sysml.runtime.matrix.data.MatrixValue.CellIndex;
@@ -66,6 +67,8 @@ public abstract class LinearRegressionTest extends AutomatedTestBase {
 		System.out.println("------------ BEGIN " + TEST_NAME + " " + scriptType + " TEST WITH {" + numRecords + ", " + numFeatures
 				+ ", " + sparsity + "} ------------");
 		this.scriptType = scriptType;
+
+		DMLScript.USE_LOCAL_SPARK_CONFIG = true;
 		
     	int rows = numRecords;
         int cols = numFeatures;

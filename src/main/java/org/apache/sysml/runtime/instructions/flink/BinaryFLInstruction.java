@@ -64,9 +64,7 @@ public abstract class BinaryFLInstruction extends ComputationFLInstruction {
             throws DMLRuntimeException {
         String[] parts = InstructionUtils.getInstructionPartsWithValueType(instr);
 
-		System.out.println(parts[0]);
-		
-        InstructionUtils.checkNumFields(parts, 3);
+		InstructionUtils.checkNumFields(parts, 3);
 
         String opcode = parts[0];
         in1.split(parts[1]);

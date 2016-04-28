@@ -23,6 +23,7 @@ import org.apache.sysml.lops.DataGen;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.instructions.flink.*;
 import org.apache.sysml.runtime.instructions.flink.FLInstruction.FLINSTRUCTION_TYPE;
+import org.apache.sysml.runtime.instructions.spark.ParameterizedBuiltinSPInstruction;
 
 import java.util.HashMap;
 
@@ -60,12 +61,29 @@ public class FLInstructionParser extends InstructionParser {
         String2FLInstructionType.put("uatrace", FLINSTRUCTION_TYPE.AggregateUnary);
         String2FLInstructionType.put("uaktrace", FLINSTRUCTION_TYPE.AggregateUnary);
 
+		//cumsum/cumprod/cummin/cummax
+		String2FLInstructionType.put( "ucumack+"  , FLINSTRUCTION_TYPE.CumsumAggregate);
+		String2FLInstructionType.put( "ucumac*"   , FLINSTRUCTION_TYPE.CumsumAggregate);
+		String2FLInstructionType.put( "ucumacmin" , FLINSTRUCTION_TYPE.CumsumAggregate);
+		String2FLInstructionType.put( "ucumacmax" , FLINSTRUCTION_TYPE.CumsumAggregate);
+		String2FLInstructionType.put( "bcumoffk+" , FLINSTRUCTION_TYPE.CumsumOffset);
+		String2FLInstructionType.put( "bcumoff*"  , FLINSTRUCTION_TYPE.CumsumOffset);
+		String2FLInstructionType.put( "bcumoffmin", FLINSTRUCTION_TYPE.CumsumOffset);
+		String2FLInstructionType.put( "bcumoffmax", FLINSTRUCTION_TYPE.CumsumOffset);
+
+		//ternary aggregate operators
+		String2FLInstructionType.put( "tak+*"      , FLINSTRUCTION_TYPE.AggregateTernary);
+
 
         //binary aggregate operators (matrix multiplication operators)
         String2FLInstructionType.put("mapmm", FLINSTRUCTION_TYPE.MAPMM);
         String2FLInstructionType.put("mapmmchain", FLINSTRUCTION_TYPE.MAPMMCHAIN);
         String2FLInstructionType.put("tsmm", FLINSTRUCTION_TYPE.TSMM);
         String2FLInstructionType.put("cpmm", FLINSTRUCTION_TYPE.CPMM);
+
+		//ternary instruction opcodes
+		String2FLInstructionType.put( "ctable", FLINSTRUCTION_TYPE.Ternary);
+		String2FLInstructionType.put( "ctableexpand", FLINSTRUCTION_TYPE.Ternary);
 
         // REBLOCK Instruction Opcodes
         String2FLInstructionType.put("rblk", FLINSTRUCTION_TYPE.Reblock);
@@ -103,6 +121,29 @@ public class FLInstructionParser extends InstructionParser {
 		String2FLInstructionType.put( "map1-*"  , FLInstruction.FLINSTRUCTION_TYPE.ArithmeticBinary);
 		String2FLInstructionType.put( "map^"    , FLInstruction.FLINSTRUCTION_TYPE.ArithmeticBinary);
 
+		String2FLInstructionType.put( "map>"    , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "map>="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "map<"    , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "map<="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "map=="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "map!="   , FLINSTRUCTION_TYPE.RelationalBinary);
+
+		// Relational Instruction Opcodes 
+		String2FLInstructionType.put( "=="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "!="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "<"    , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( ">"    , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( "<="   , FLINSTRUCTION_TYPE.RelationalBinary);
+		String2FLInstructionType.put( ">="   , FLINSTRUCTION_TYPE.RelationalBinary);
+
+		// Parameterized Builtin Functions
+		//String2FLInstructionType.put( "groupedagg"   , FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+		String2FLInstructionType.put( "mapgroupedagg", FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+		String2FLInstructionType.put( "rmempty"	     , FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+		String2FLInstructionType.put( "replace"	     , FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+		String2FLInstructionType.put( "rexpand"	     , FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+		String2FLInstructionType.put( "transform"    , FLINSTRUCTION_TYPE.ParameterizedBuiltin);
+
         String2FLInstructionType.put("write", FLINSTRUCTION_TYPE.Write);
 
     }
@@ -135,6 +176,9 @@ public class FLInstructionParser extends InstructionParser {
             case ArithmeticBinary:
                 return ArithmeticBinaryFLInstruction.parseInstruction(str);
 
+			case AggregateTernary:
+				return AggregateTernaryFLInstruction.parseInstruction(str);
+
             // matrix multiplication instructions
             /*
 			case CPMM:
@@ -146,8 +190,15 @@ public class FLInstructionParser extends InstructionParser {
             case TSMM:
                 return TsmmFLInstruction.parseInstruction(str);
 
+			case RelationalBinary:
+				return RelationalBinaryFLInstruction.parseInstruction(str);
 
-            case Reblock:
+			case CumsumAggregate:
+				return CumulativeAggregateFLInstruction.parseInstruction(str);
+			case CumsumOffset:
+				return CumulativeOffsetFLInstruction.parseInstruction(str);
+
+			case Reblock:
                 return ReblockFLInstruction.parseInstruction(str);
             case CSVReblock:
                 return CSVReblockFLInstruction.parseInstruction(str);
@@ -156,6 +207,9 @@ public class FLInstructionParser extends InstructionParser {
 			
 			case Rand:
                 return RandFLInstruction.parseInstruction(str);
+
+			case ParameterizedBuiltin:
+				return ParameterizedBuiltinFLInstruction.parseInstruction(str);
 
 
             case INVALID:

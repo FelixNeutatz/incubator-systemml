@@ -84,7 +84,7 @@ public class CumulativeOffsetBinary extends Lop
 			lps.addCompatibility(JobType.DATAGEN);
 			lps.setProperties(inputs, et, ExecLocation.Reduce, breaksAlignment, aligner, definesMRJob);
 		}
-		else //Spark/CP
+		else //Spark/CP/FLINK
 		{
 			//setup Spark parameters 
 			boolean breaksAlignment = false;
@@ -157,7 +157,7 @@ public class CumulativeOffsetBinary extends Lop
 		sb.append( getInputs().get(1).prepInputOperand(input2) );
 		sb.append( OPERAND_DELIMITOR );
 		sb.append( this.prepOutputOperand(output) );
-		if( getExecType() == ExecType.SPARK ) {
+		if( getExecType() == ExecType.SPARK ||  getExecType() == ExecType.FLINK) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _initValue );	
 		}

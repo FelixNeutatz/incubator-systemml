@@ -30,12 +30,12 @@ public abstract class FLInstruction extends Instruction {
 
     public enum FLINSTRUCTION_TYPE {
         TSMM, Reorg, Reblock, CSVReblock, Write, ArithmeticBinary, AggregateUnary, INVALID, MAPMM, MAPMMCHAIN, CPMM, //RMM, PMM, ZIPMM, PMAPMM, //matrix multiplication instructions
-        //        MatrixIndexing, RelationalBinary, AggregateUnary, AggregateTernary,
+		RelationalBinary,AggregateTernary,//        MatrixIndexing
 //        Builtin, BuiltinUnary, BuiltinBinary,
 //        CentralMoment, Covariance, QSort, QPick,
-//        ParameterizedBuiltin, MAppend, RAppend, GAppend, GAlignedAppend, 
+		ParameterizedBuiltin, //        MAppend, RAppend, GAppend, GAlignedAppend, 
         Rand,
-//        MatrixReshape, Ternary, Quaternary, CumsumAggregate, CumsumOffset, BinUaggChain, UaggOuterChain,
+		CumsumAggregate, CumsumOffset, Ternary//        MatrixReshape, Quaternary, BinUaggChain, UaggOuterChain,
 //
     }
 

@@ -366,7 +366,7 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 			setLineNumbers(grp_agg);
 			setLops(grp_agg);
 		}
-		else //CP/Spark 
+		else //CP/Spark/Flink
 		{
 			Lop grp_agg = null;
 			
@@ -400,6 +400,32 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 					grp_agg = new GroupedAggregate(inputlops, getDataType(), getValueType(), et, broadcastGroups);						
 					grp_agg.getOutputParameters().setDimensions(outputDim1, outputDim2, -1, -1, -1);
 					setRequiresReblock( true );	
+				}
+			}
+			else if(et == ExecType.FLINK)
+			{
+				//physical operator selection
+				Hop groups = getInput().get(_paramIndexMap.get(Statement.GAGG_GROUPS));
+				boolean broadcastGroups = (_paramIndexMap.get(Statement.GAGG_WEIGHTS) == null &&
+					OptimizerUtils.checkSparkBroadcastMemoryBudget( groups.getDim1(), groups.getDim2(),
+						groups.getRowsInBlock(), groups.getColsInBlock(), groups.getNnz()) );
+
+				if( broadcastGroups //mapgroupedagg
+					&& getInput().get(_paramIndexMap.get(Statement.GAGG_FN)) instanceof LiteralOp
+					&& ((LiteralOp)getInput().get(_paramIndexMap.get(Statement.GAGG_FN))).getStringValue().equals("sum")
+					&& inputlops.get(Statement.GAGG_NUM_GROUPS) != null )
+				{
+					Hop target = getInput().get(_paramIndexMap.get(Statement.GAGG_TARGET));
+
+					grp_agg = new GroupedAggregateM(inputlops, getDataType(), getValueType(), true, ExecType.FLINK);
+					grp_agg.getOutputParameters().setDimensions(outputDim1, outputDim2, target.getRowsInBlock(), target.getColsInBlock(), -1);
+					//no reblock required (directly output binary block)
+				}
+				else //groupedagg (w/ or w/o broadcast)
+				{
+					grp_agg = new GroupedAggregate(inputlops, getDataType(), getValueType(), et, broadcastGroups);
+					grp_agg.getOutputParameters().setDimensions(outputDim1, outputDim2, -1, -1, -1);
+					setRequiresReblock( true );
 				}
 			}
 			
@@ -772,6 +798,95 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 			
 			//NOTE: in contrast to mr, replication and aggregation handled instruction-local
 		}
+		else if( et == ExecType.FLINK )
+		{
+			if( !(marginHop instanceof LiteralOp) )
+				throw new HopsException("Parameter 'margin' must be a literal argument.");
+
+			Hop input = targetHop;
+			long rlen = input.getDim1();
+			long clen = input.getDim2();
+			long brlen = input.getRowsInBlock();
+			long bclen = input.getColsInBlock();
+			boolean rmRows = ((LiteralOp)marginHop).getStringValue().equals("rows");
+
+			//construct lops via new partial hop dag and subsequent lops construction 
+			//in order to reuse of operator selection decisions
+			BinaryOp ppred0 = null;
+			Hop emptyInd = null;
+
+			if(selectHop == null) {
+				//Step1: compute row/col non-empty indicators 
+				ppred0 = new BinaryOp("tmp1", DataType.MATRIX, ValueType.DOUBLE, OpOp2.NOTEQUAL, input, new LiteralOp(0));
+				HopRewriteUtils.setOutputBlocksizes(ppred0, brlen, bclen);
+				ppred0.refreshSizeInformation();
+				ppred0.setForcedExecType(ExecType.FLINK); //always Flink
+				HopRewriteUtils.copyLineNumbers(this, ppred0);
+
+				emptyInd = ppred0;
+				if( !((rmRows && clen == 1) || (!rmRows && rlen==1)) ){
+					emptyInd = new AggUnaryOp("tmp2", DataType.MATRIX, ValueType.DOUBLE, AggOp.MAX, rmRows?Direction.Row:Direction.Col, ppred0);
+					HopRewriteUtils.setOutputBlocksizes(emptyInd, brlen, bclen);
+					emptyInd.refreshSizeInformation();
+					emptyInd.setForcedExecType(ExecType.FLINK); //always Flink
+					HopRewriteUtils.copyLineNumbers(this, emptyInd);
+				}
+			} else {
+				emptyInd = selectHop;
+				HopRewriteUtils.setOutputBlocksizes(emptyInd, brlen, bclen);
+				emptyInd.refreshSizeInformation();
+				emptyInd.setForcedExecType(ExecType.FLINK); //always Flink
+				HopRewriteUtils.copyLineNumbers(this, emptyInd);
+			}
+
+			//Step 2: compute row offsets for non-empty rows
+			Hop cumsumInput = emptyInd;
+			if( !rmRows ){
+				cumsumInput = HopRewriteUtils.createTranspose(emptyInd);
+				HopRewriteUtils.updateHopCharacteristics(cumsumInput, brlen, bclen, this);
+			}
+
+			UnaryOp cumsum = new UnaryOp("tmp3", DataType.MATRIX, ValueType.DOUBLE, OpOp1.CUMSUM, cumsumInput);
+			HopRewriteUtils.updateHopCharacteristics(cumsum, brlen, bclen, this);
+
+			Hop cumsumOutput = cumsum;
+			if( !rmRows ){
+				cumsumOutput = HopRewriteUtils.createTranspose(cumsum);
+				HopRewriteUtils.updateHopCharacteristics(cumsumOutput, brlen, bclen, this);
+			}
+
+			Hop maxDim = new AggUnaryOp("tmp4", DataType.SCALAR, ValueType.DOUBLE, AggOp.MAX, Direction.RowCol, cumsumOutput); //alternative: right indexing
+			HopRewriteUtils.updateHopCharacteristics(maxDim, brlen, bclen, this);
+
+			BinaryOp offsets = new BinaryOp("tmp5", DataType.MATRIX, ValueType.DOUBLE, OpOp2.MULT, cumsumOutput, emptyInd);
+			HopRewriteUtils.updateHopCharacteristics(offsets, brlen, bclen, this);
+
+			//Step 3: gather non-empty rows/cols into final results 
+			Lop linput = input.constructLops();
+			Lop loffset = offsets.constructLops();
+			Lop lmaxdim = maxDim.constructLops();
+
+			HashMap<String, Lop> inMap = new HashMap<String, Lop>();
+			inMap.put("target", linput);
+			inMap.put("offset", loffset);
+			inMap.put("maxdim", lmaxdim);
+			inMap.put("margin", inputlops.get("margin"));
+
+			if ( !FORCE_DIST_RM_EMPTY && isRemoveEmptyBcSP())
+				_bRmEmptyBC = true;
+
+			ParameterizedBuiltin pbilop = new ParameterizedBuiltin( inMap, HopsParameterizedBuiltinLops.get(_op), getDataType(), getValueType(), et, _bRmEmptyBC);
+			setOutputDimensions(pbilop);
+			setLineNumbers(pbilop);
+
+			//Step 4: cleanup hops (allow for garbage collection)
+			if(selectHop == null)
+				HopRewriteUtils.removeChildReference(ppred0, input);
+
+			setLops(pbilop);
+
+			//NOTE: in contrast to mr, replication and aggregation handled instruction-local
+		}
 	}
 	
 	/**
@@ -784,7 +899,7 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 	private void constructLopsRExpand(HashMap<String, Lop> inputlops, ExecType et) 
 		throws HopsException, LopsException 
 	{
-		if( et == ExecType.CP || et == ExecType.SPARK )
+		if( et == ExecType.CP || et == ExecType.SPARK || et == ExecType.FLINK)
 		{
 			ParameterizedBuiltin pbilop = new ParameterizedBuiltin(inputlops, 
 					HopsParameterizedBuiltinLops.get(_op), getDataType(), getValueType(), et);
@@ -985,7 +1100,7 @@ public class ParameterizedBuiltinOp extends Hop implements MultiThreadedHop
 	{
 		checkAndSetForcedPlatform();
 
-		ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
+		ExecType REMOTE = OptimizerUtils.getRemoteExecType();
 		
 		if( _etypeForced != null ) 			
 		{

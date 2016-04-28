@@ -195,7 +195,7 @@ public class TernaryOp extends Hop
 			setLineNumbers(unary1);
 			setLops(unary1);
 		}
-		else //CP / SPARK
+		else //CP / SPARK / FLINK
 		{
 			CentralMoment cm = new CentralMoment(
 					getInput().get(0).constructLops(),
@@ -253,7 +253,7 @@ public class TernaryOp extends Hop
 			setLineNumbers(unary1);
 			setLops(unary1);
 		}
-		else //CP / SPARK
+		else //CP / SPARK / FLINK
 		{
 			CoVariance cov = new CoVariance(
 					getInput().get(0).constructLops(), 

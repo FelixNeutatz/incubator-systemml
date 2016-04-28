@@ -129,6 +129,30 @@ public class RemoveEmptyTest extends AutomatedTestBase
 		runTestRemoveEmpty( TEST_NAME1, "cols", ExecType.SPARK, true );
 	}
 
+	@Test
+	public void testRemoveEmptyRowsDenseFL()
+	{
+		runTestRemoveEmpty( TEST_NAME1, "rows", ExecType.FLINK, false );
+	}
+
+	@Test
+	public void testRemoveEmptyRowsSparseFL()
+	{
+		runTestRemoveEmpty( TEST_NAME1, "rows", ExecType.FLINK, true );
+	}
+
+	@Test
+	public void testRemoveEmptyColsDenseFL()
+	{
+		runTestRemoveEmpty( TEST_NAME1, "cols", ExecType.FLINK, false );
+	}
+
+	@Test
+	public void testRemoveEmptyColsSparseFL()
+	{
+		runTestRemoveEmpty( TEST_NAME1, "cols", ExecType.FLINK, true );
+	}
+
 	
 	@Test
 	public void testRemoveEmptyRowsMultipleDenseCP() 
@@ -445,6 +469,7 @@ public class RemoveEmptyTest extends AutomatedTestBase
 		switch( et ){
 			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
 			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
+			case FLINK: rtplatform = RUNTIME_PLATFORM.FLINK; break;
 			default: rtplatform = RUNTIME_PLATFORM.HYBRID; break;
 		}
 	
