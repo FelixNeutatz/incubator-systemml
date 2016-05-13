@@ -111,5 +111,10 @@ public class DiagV2MTest extends AutomatedTestBase
 	public void testDiagV2MSP() {
 		commonReorgTest(RUNTIME_PLATFORM.SPARK);
 	}
+
+	@Test
+	public void testDiagV2MFL() {
+		commonReorgTest(RUNTIME_PLATFORM.FLINK);
+	}
 }
 

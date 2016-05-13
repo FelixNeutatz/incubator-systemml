@@ -22,9 +22,11 @@ package org.apache.sysml.runtime.instructions.flink.utils;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.util.Collector;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.util.UtilFunctions;
 
 import java.util.ArrayList;
@@ -53,4 +55,33 @@ public class FlinkUtils {
         //create dataset of in-memory list
         return env.fromCollection(list);
     }
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static IndexedMatrixValue toIndexedMatrixBlock(Tuple2<MatrixIndexes, MatrixBlock> in) {
+		return new IndexedMatrixValue(in.f0, in.f1);
+	}
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static Tuple2<MatrixIndexes,MatrixBlock> fromIndexedMatrixBlock( IndexedMatrixValue in ){
+		return new Tuple2<MatrixIndexes,MatrixBlock>(in.getIndexes(), (MatrixBlock)in.getValue());
+	}
+
+	/**
+	 *
+	 * @param in
+	 * @return
+	 */
+	public static void fromIndexedMatrixBlock(ArrayList<IndexedMatrixValue> in, Collector<Tuple2<MatrixIndexes, MatrixBlock>> out)
+	{
+		for( IndexedMatrixValue imv : in )
+			out.collect(fromIndexedMatrixBlock(imv));
+	}
 }

@@ -19,8 +19,11 @@
 
 package org.apache.sysml.runtime.instructions.flink;
 
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.util.Collector;
 import org.apache.sysml.parser.Expression;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.context.ExecutionContext;
@@ -31,12 +34,20 @@ import org.apache.sysml.runtime.functionobjects.SortIndex;
 import org.apache.sysml.runtime.functionobjects.SwapIndex;
 import org.apache.sysml.runtime.instructions.InstructionUtils;
 import org.apache.sysml.runtime.instructions.cp.CPOperand;
+import org.apache.sysml.runtime.instructions.flink.functions.FilterDiagBlocksFunction;
 import org.apache.sysml.runtime.instructions.flink.functions.ReorgMapFunction;
+import org.apache.sysml.runtime.instructions.flink.utils.DataSetAggregateUtils;
+import org.apache.sysml.runtime.instructions.flink.utils.FlinkUtils;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
+import org.apache.sysml.runtime.matrix.data.LibMatrixReorg;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.MatrixIndexes;
+import org.apache.sysml.runtime.matrix.mapred.IndexedMatrixValue;
 import org.apache.sysml.runtime.matrix.operators.Operator;
 import org.apache.sysml.runtime.matrix.operators.ReorgOperator;
+import org.apache.sysml.runtime.util.UtilFunctions;
+
+import java.util.ArrayList;
 
 public class ReorgFLInstruction extends UnaryFLInstruction {
 
@@ -117,15 +128,24 @@ public class ReorgFLInstruction extends UnaryFLInstruction {
                 //execute transpose reorg operation
                 out = in1.map(new ReorgMapFunction(opcode));
             }
-            else if( opcode.equalsIgnoreCase("rev") ) //REVERSE
-            {
-                throw new UnsupportedOperationException();
-                //execute reverse reorg operation
-            }
-            else if ( opcode.equalsIgnoreCase("rdiag") ) // DIAG
-            {
-                throw new UnsupportedOperationException();
-            }
+			else if( opcode.equalsIgnoreCase("rev") ) //REVERSE
+			{
+				//execute reverse reorg operation
+				out = in1.flatMap(new DataSetRevFunction(mcIn));
+				if( mcIn.getRows() % mcIn.getRowsPerBlock() != 0 )
+					out = DataSetAggregateUtils.mergeByKey(out);
+			}
+			else if ( opcode.equalsIgnoreCase("rdiag") ) // DIAG
+			{
+				if(mcIn.getCols() == 1) { // diagV2M
+					out = in1.flatMap(new DataSetDiagV2MFunction(mcIn));
+				}
+				else { // diagM2V
+					//execute diagM2V operation
+					out = in1.filter(new FilterDiagBlocksFunction())
+						.map(new ReorgMapFunction(opcode));
+				}
+			}
             else if ( opcode.equalsIgnoreCase("rsort") ) //ORDER
             {
                 throw new UnsupportedOperationException();
@@ -176,6 +196,103 @@ public class ReorgFLInstruction extends UnaryFLInstruction {
                     mcOut.setNonZeros(mc1.getNonZeros());
             }
         }
-    }
+
+	/**
+	 *
+	 */
+	private static class DataSetDiagV2MFunction implements FlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, Tuple2<MatrixIndexes, MatrixBlock>>
+	{
+		private static final long serialVersionUID = 31065772250744103L;
+
+		private ReorgOperator _reorgOp = null;
+		private MatrixCharacteristics _mcIn = null;
+
+		public DataSetDiagV2MFunction(MatrixCharacteristics mcIn)
+			throws DMLRuntimeException
+		{
+			_reorgOp = new ReorgOperator(DiagIndex.getDiagIndexFnObject());
+			_mcIn = mcIn;
+		}
+
+		@Override
+		public void flatMap( Tuple2<MatrixIndexes, MatrixBlock> arg0, Collector<Tuple2<MatrixIndexes, MatrixBlock>> out)
+			throws Exception
+		{
+			ArrayList<Tuple2<MatrixIndexes, MatrixBlock>> ret = new ArrayList<Tuple2<MatrixIndexes,MatrixBlock>>();
+
+			MatrixIndexes ixIn = arg0.f0;
+			MatrixBlock blkIn = arg0.f1;
+
+			//compute output indexes and reorg data
+			long rix = ixIn.getRowIndex();
+			MatrixIndexes ixOut = new MatrixIndexes(rix, rix);
+			MatrixBlock blkOut = (MatrixBlock) blkIn.reorgOperations(_reorgOp, new MatrixBlock(), -1, -1, -1);
+			ret.add(new Tuple2<MatrixIndexes, MatrixBlock>(ixOut,blkOut));
+
+			// insert newly created empty blocks for entire row
+			int numBlocks = (int) Math.ceil((double)_mcIn.getRows()/_mcIn.getRowsPerBlock());
+			for(int i = 1; i <= numBlocks; i++) {
+				if(i != ixOut.getColumnIndex()) {
+					int lrlen = UtilFunctions.computeBlockSize(_mcIn.getRows(), rix, _mcIn.getRowsPerBlock());
+					int lclen = UtilFunctions.computeBlockSize(_mcIn.getRows(), i, _mcIn.getRowsPerBlock());
+					MatrixBlock emptyBlk = new MatrixBlock(lrlen, lclen, true);
+					out.collect(new Tuple2<MatrixIndexes, MatrixBlock>(new MatrixIndexes(rix, i), emptyBlk));
+				}
+			}
+		}
+	}
+
+	/**
+	 *
+	 */
+	private static class DataSetRevFunction implements FlatMapFunction<Tuple2<MatrixIndexes, MatrixBlock>, Tuple2<MatrixIndexes, MatrixBlock>>
+	{
+		private static final long serialVersionUID = 1183373828539843938L;
+
+		private MatrixCharacteristics _mcIn = null;
+
+		public DataSetRevFunction(MatrixCharacteristics mcIn)
+			throws DMLRuntimeException
+		{
+			_mcIn = mcIn;
+		}
+
+		@Override
+		public void flatMap(Tuple2<MatrixIndexes, MatrixBlock> arg0 , Collector<Tuple2<MatrixIndexes, MatrixBlock>> out)
+			throws Exception
+		{
+			//construct input
+			IndexedMatrixValue in = FlinkUtils.toIndexedMatrixBlock(arg0);
+
+			//execute reverse operation
+			ArrayList<IndexedMatrixValue> out1 = new ArrayList<IndexedMatrixValue>();
+			LibMatrixReorg.rev(in, _mcIn.getRows(), _mcIn.getRowsPerBlock(), out1);
+
+			//construct output
+			FlinkUtils.fromIndexedMatrixBlock(out1, out);
+		}
+	}
+
+	/**
+	 *
+	 */
+	private static class ExtractColumn implements MapFunction<MatrixBlock, MatrixBlock>
+	{
+		private static final long serialVersionUID = -1472164797288449559L;
+
+		private int _col;
+
+		public ExtractColumn(int col) {
+			_col = col;
+		}
+
+		@Override
+		public MatrixBlock map(MatrixBlock arg0)
+			throws Exception
+		{
+			return arg0.sliceOperations(0, arg0.getNumRows()-1, _col, _col, new MatrixBlock());
+		}
+	}
+}
 
 
